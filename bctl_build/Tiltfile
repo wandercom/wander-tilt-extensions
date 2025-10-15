@@ -1,0 +1,139 @@
+version_settings(constraint='>=0.35.1')
+
+# kubectl does not know which context we're running against. Wire up Tilt's context provider.
+def kubectl_cmd(*args):
+  return 'kubectl --context {ctx} {args}'.format(
+    ctx=k8s_context(),
+    args=' '.join([shlex. quote(str(x)) for x in args]),
+  )
+
+# We provision `buildkitd` as a service in both our laptop and GKE staging environments.
+# This relies on the fact that since 2022, Kubernetes has defaulted to using the `containerd`
+# container runtime rather than the Docker container runtime, since `buildkitd` targets
+# either CRI-compliant container runtimes such as CRI-O or, explicitly, `containerd`.
+# The goal is to be able to build OCI-compliant images for our services from where the
+# source is, in a conventional way (i.e. with a `Dockerfile`), using the `buildctl`
+# `buildkitd` client, which handles the packaging and transfer of the build context
+# to `buildkitd`, then uses both the appropriate frontend (`dockerfile`) and backend
+# (`containerd` worker) to build the image. By using the `containerd` process that runs
+# Kubernetes itself, the result is an image in the `containerd` store that is immediately
+# available to the Kubernetes cluster without needing to be "pushed" to and "pulled" from
+# an OCI-compliant image registry. This works extremely well with Tilt's control loop and short iteration
+# cycles. However, `buildctl` also does support pushing to image registries, and in the
+# more formal "staging" GKE environment, we'll take advantage of that fact.
+#
+# The API design here is taken directly from `docker_build`'s, so as to be as close to a drop-in
+# replacement as feasible. The `ssh`, `network`, `secret`, `container_args`, `pull`, `platform`,
+# and `extra_host` args are kept for completeness, but unimplemented as of this writing.
+def bctl_build(
+  ref,
+  context,
+  build_args = {},
+  dockerfile = 'Dockerfile',
+  dockerfile_contents = '',
+  live_update = [],
+  match_in_env_vars = False,
+  ignore = [],
+  only = [],
+  entrypoint = [],
+  target = '',
+  ssh = '',
+  network = '',
+  secret = '',
+  extra_tag = '',
+  container_args = None,
+  cache_from = [],
+  pull = False,
+  platform = '',
+  extra_host = [],
+  addr = ('kube-pod://buildkitd-0' if in_env('local') else 'tcp://buildkitd.default.svc:1234') + '?context=' + k8s_context(),  # Targets the buildkitd service
+  push = False,
+  k8s_cert_secret = None,
+  k8s_cert_secret_namespace = "default"
+):
+  # This function attempts to introduce "only" functionality for custom_build,
+  # which is otherwise natively supported by docker_build
+  def approximate_ignore_from_only(context, only):
+    # strip ./ and trailing / from a file name
+    def normalize_name(fname):
+      return fname.removeprefix("./").removesuffix("/")
+    if only:
+      norm_only = set([normalize_name(file) for file in only])
+      # This only permits ignoring top-level files.
+      # For a more complete algorithm, we should expand the ignore for every file
+      # in every level of every named directory.
+      # That is to say:
+      #     only=["foo/bar/baz"]
+      # should expand to
+      #     ignore=["foo/a", "foo/bar/a"]
+      # given the directory structure foo/a, foo/bar/a, foo/bar/baz
+      all_files = str(local("ls {context}".format(context=context), quiet = True, echo_off = True)).split('\n')
+      result = set([
+        normalize_name(file)
+        for file in all_files
+        if file and (file not in only)
+      ])
+    else:
+      result = set([])
+    return list(result)
+
+  tls_args = ""
+  if k8s_cert_secret:
+      # We have a secret to fetch, so lets go about that.
+      # First, create a tempdir. Also do some ceremony around converting it to
+      # a string and trimming off the trailing newline.
+      tmp_dir = str(local('mktemp -d')).strip()
+
+      # Pull the secrets from kubernetes, using the argument as the secret
+      # name, into the temp dir we just created.
+      local('\n'.join([args.format(
+          kubectl_cmd=kubectl_cmd(),
+          secret_name=k8s_cert_secret,
+          tmp_dir=tmp_dir,
+          ns=k8s_cert_secret_namespace,
+          tls_crt='{.data.tls\\.crt}',
+          tls_key='{.data.tls\\.key}',
+          ca_crt='{.data.ca\\.crt}'
+      ) for args in [
+        "{kubectl_cmd} get secret {secret_name} -n {ns} -o jsonpath='{tls_crt}' | base64 -d > {tmp_dir}/client.crt",
+        "{kubectl_cmd} get secret {secret_name} -n {ns} -o jsonpath='{tls_key}' | base64 -d > {tmp_dir}/client.key",
+        "{kubectl_cmd} get secret {secret_name} -n {ns} -o jsonpath='{ca_crt}' | base64 -d > {tmp_dir}/ca.crt",
+      ]]))
+
+      tls_args = "--tlscert {tmp_dir}/client.crt --tlskey {tmp_dir}/client.key --tlscacert {tmp_dir}/ca.crt".format(tmp_dir=tmp_dir)
+
+  new_args = " ".join(["--opt build-arg:" + key + "=" + value for key, value in build_args.items()])
+  push_clause = ",push=true" if push else ""
+  cache_opts = ' '.join([
+    '--export-cache {cache_ref} --import-cache {cache_ref}'.format(cache_ref=cache_ref)
+    for cache_ref
+    in cache_from
+  ])
+  custom_build(
+    ref = ref,
+    command = '''
+      buildctl {tls_args} --addr {addr} \
+        build {new_args} \
+          --frontend dockerfile.v0 \
+          --local context={context} --local dockerfile={context} \
+          --opt filename={dockerfile} \
+          --output type=image,name=$EXPECTED_REF{push_clause} \
+          {cache_opts}
+    '''.format(
+      tls_args=tls_args,
+      addr=addr,
+      context=context,
+      dockerfile=dockerfile,
+      new_args=new_args,
+      push_clause=push_clause,
+      cache_opts=cache_opts,
+    ),
+    deps = [context],
+    tag = extra_tag,
+    disable_push = False,
+    skips_local_docker=True,
+    live_update = live_update,
+    match_in_env_vars = match_in_env_vars,
+    ignore = list(set(ignore) | set(approximate_ignore_from_only(context, only))),
+    entrypoint = entrypoint,
+  )
