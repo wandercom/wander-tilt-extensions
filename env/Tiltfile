@@ -1,3 +1,5 @@
+version_settings(constraint='>=0.35.1')
+
 # Determine what environment we are in
 def in_env(key):
   return os.getenv("TILTENV", "local") == key

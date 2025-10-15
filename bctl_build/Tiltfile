@@ -1,5 +1,9 @@
 version_settings(constraint='>=0.35.1')
 
+v1alpha1.extension_repo(name='wander-ext', url='https://github.com/wandercom/wander-tilt-extensions')
+v1alpha1.extension(name='env', repo_name='wander-ext', repo_path='env')
+load('ext://env', 'in_env')
+
 # kubectl does not know which context we're running against. Wire up Tilt's context provider.
 def kubectl_cmd(*args):
   return 'kubectl --context {ctx} {args}'.format(
