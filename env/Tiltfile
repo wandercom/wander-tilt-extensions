@@ -1,0 +1,3 @@
+# Determine what environment we are in
+def in_env(key):
+  return os.getenv("TILTENV", "local") == key
