@@ -1,0 +1,42 @@
+# A very minimal "templating" structure which uses yq to:
+# 1. deep-merge .wander-env[$env] into the root object,
+# 2. then remove .wander-env, and finally
+# 3. return the whole buffer
+def wtpl_builder(env):
+  def wtpl(filepath, **kwargs):
+    outpath = kwargs.get('outpath')
+    watch_file(filepath)
+
+    return local('''
+      yq -y \
+        --arg env "{env}" \
+        --argjson unit "{{}}" '
+      ((.["wander-env"] // $unit)[$env] // $unit) as $spec | . |= (. * $spec) | .["wander-env"] |= empty
+      ' < {filepath} {outredir}
+    '''.format(
+      env=env,
+      filepath=filepath,
+      outredir=' > {outpath}'.format(outpath=outpath) if outpath else '',
+    ), quiet=True, echo_off=True)
+  return wtpl
+
+# wtpl_helm_values
+#
+# The pattern of manually interpolating a helm values file and injecting that
+# into the resource is a pattern we've done a few times.
+#
+# This accepts a lambda and strings it through.
+def wtpl_helm_values_builder(env):
+  wtpl = wtpl_builder(env)
+  def wtpl_helm_values(name, values_src, resource=None):
+    if resource == None:
+      fail('wtpl_helm_values({name}, {values_src}, ...) needs a "resource" parameter'.format(name=name, values_src=values_src))
+    target_dir = '/tmp/tilt-wtpl/{env}'.format(env=env)
+    target = '{target_dir}/{name}.interpolated'.format(target_dir=target_dir, name=name)
+    if not os.path.exists(target_dir):
+      local('mkdir -p {target_dir}'.format(target_dir=shlex.quote(target_dir)))
+
+    watch_file(values_src)
+    wtpl(values_src, outpath=target)
+    return resource(target)
+  return wtpl_helm_values
