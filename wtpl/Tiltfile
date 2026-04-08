@@ -15,23 +15,36 @@ def wtpl_builder(env):
     else:
       images = "null"
 
-    return local('''
-      yq -y \
-        --arg env "{env}" \
-        --argjson unit "{{}}" '
-      ((.["wander-env"] // $unit)[$env] // $unit) as $spec |
-      ((.["wander-deployment-env"] // $unit)[$env] // $unit) as $overrides |
-      .["wander-env"] |= empty | .["wander-deployment-env"] |= empty |
-      . |= (. * $spec) | .containers |= map(
-          (. * ($overrides[.name] // $unit)) |
-          if $images !== null then (.image |= $images[.name]) else . end
+    program = '
+      ((.["wander-env"] // {})[$ENV["TILTENV"]] // {}) as $spec |
+      .["wander-env"] |= empty |
+      ( . * ($spec | (.containers |= empty))
+      | .containers |= map(. as $container |
+          ( $container * ($spec.container_overrides[$container.name] // {}) )
+          | if $images[.name] != null then (.image |= $images[.name]) else . end
         )
-      ' < {filepath} {outredir}
-    '''.format(
-      env=env,
-      filepath=filepath,
-      outredir=' > {outpath}'.format(outpath=outpath) if outpath else '',
-    ), quiet=True, echo_off=True)
+      )
+    '
+
+    rendered = local(
+      ['yq', '-y', '--images', images, program],
+      quiet=True,
+      echo_off=True,
+      stdin=filepath,
+      env={
+        "TILTENV": env,
+      }
+    )
+    if outpath:
+      local(
+        'cat > {outpath}'.format(outpath=outpath),
+        stdin=rendered,
+        quiet=True,
+        echo_off=True,
+      )
+    else:
+      # If we have not written to a file, we are expected to return the rendered result for k8s_yaml(...)
+      return rendered
   return wtpl
 
 # wtpl_helm_values
