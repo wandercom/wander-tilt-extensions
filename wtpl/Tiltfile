@@ -7,11 +7,25 @@ def wtpl_builder(env):
     outpath = kwargs.get('outpath')
     watch_file(filepath)
 
+    # { "v4-bar": "docker.io/foo/bar:1.2.3", ... }
+    # Broad restriction is that it must not contain ', since we're using that to enclose the json object arg.
+    images = kwargs.get('images')
+    if images:
+      images = encode_json(images)
+    else:
+      images = "null"
+
     return local('''
       yq -y \
         --arg env "{env}" \
         --argjson unit "{{}}" '
-      ((.["wander-env"] // $unit)[$env] // $unit) as $spec | . |= (. * $spec) | .["wander-env"] |= empty
+      ((.["wander-env"] // $unit)[$env] // $unit) as $spec |
+      ((.["wander-deployment-env"] // $unit)[$env] // $unit) as $overrides |
+      .["wander-env"] |= empty | .["wander-deployment-env"] |= empty |
+      . |= (. * $spec) | .containers |= map(
+          (. * ($overrides[.name] // $unit)) |
+          if $images !== null then (.image |= $images[.name]) else . end
+        )
       ' < {filepath} {outredir}
     '''.format(
       env=env,
