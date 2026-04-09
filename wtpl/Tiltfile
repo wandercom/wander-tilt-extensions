@@ -23,7 +23,7 @@ def wtpl_builder(env):
           .spec.template.spec.containers |= map(. as $container
             | ( $spec.container_overrides[$container.name] // {} ) as $overrides
             | ( $container * $fallback_overrides * $overrides )
-            | if $images[.name] != null then (.image |= $images[.name]) else . end
+            | if $images[$container.name] != null then (.image |= $images[$container.name]) else . end
           )
         else . end
     '''
@@ -37,6 +37,7 @@ def wtpl_builder(env):
         "TILTENV": env,
       }
     )
+
     if outpath:
       local(
         'cat > {outpath}'.format(outpath=outpath),
