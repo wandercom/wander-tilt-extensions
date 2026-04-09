@@ -29,10 +29,10 @@ def wtpl_builder(env):
     '
 
     rendered = local(
-      ['yq', '-y', '--images', images, program],
+      ['yq', '-y', '--argjson', 'images', images, program],
       quiet=True,
       echo_off=True,
-      stdin=filepath,
+      stdin=read_file(filepath),
       env={
         "TILTENV": env,
       }
