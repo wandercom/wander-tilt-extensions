@@ -22,7 +22,7 @@ def wtpl_builder(env):
       | if .spec.template.spec.containers != null then
           .spec.template.spec.containers |= map(. as $container
             | ( $spec.container_overrides[$container.name] // {} ) as $overrides
-            | ( $container * $overrides * $fallback_overrides )
+            | ( $container * $fallback_overrides * $overrides )
             | if $images[.name] != null then (.image |= $images[.name]) else . end
           )
         else . end
