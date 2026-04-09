@@ -12,7 +12,7 @@ def wtpl_builder(env):
     # Broad restriction is that it must not contain ', since we're using that to enclose the json object arg.
     images = encode_json(kwargs.get('images', {}))
 
-    program = '
+    program = '''
       . as $manifest
       | (($manifest["wander-deployment-env"] // {})[$ENV["TILTENV"] // empty] // {}) as $fallback_overrides
       | ((.["wander-env"] // {})[$ENV["TILTENV"] // empty] // {}) as $spec
@@ -26,7 +26,7 @@ def wtpl_builder(env):
             | if $images[.name] != null then (.image |= $images[.name]) else . end
           )
         else . end
-    '
+    '''
 
     rendered = local(
       ['yq', '-y', '--argjson', 'images', images, program],
