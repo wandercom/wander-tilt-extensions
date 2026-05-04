@@ -1,8 +1,11 @@
 # A very minimal "templating" structure which uses yq to:
 # 1. deep-merge .wander-env[$env] into the root object,
 # 2. Iterates over .spec.template.spec.containers and deep merges .wander-env[$env].container_overrides[$container.name]
-# 3. then remove .wander-env, and finally
-# 4. return the whole buffer
+# 3. then remove .wander-env,
+# 4. deep-merge any caller-supplied `extra_overrides` into the result
+#    (lets callers inject runtime-computed values like canary routing keys
+#     without having to author a `wander-env[<synthetic-env>]` entry), and finally
+# 5. return the whole buffer
 def wtpl_builder(env):
   def wtpl(filepath, **kwargs):
     outpath = kwargs.get('outpath')
@@ -11,6 +14,11 @@ def wtpl_builder(env):
     # { "v4-bar": "docker.io/foo/bar:1.2.3", ... }
     # Broad restriction is that it must not contain ', since we're using that to enclose the json object arg.
     images = encode_json(kwargs.get('images', {}))
+    # Optional runtime overrides deep-merged into the root after the standard
+    # env merge. Use this for values that aren't known until Tiltfile-eval time
+    # — e.g. a canary routing key that must land in metadata.name and a few
+    # selector labels. Defaults to {} so this is a no-op for existing callers.
+    extra_overrides = encode_json(kwargs.get('extra_overrides', {}))
 
     program = '''
       . as $manifest
@@ -26,10 +34,11 @@ def wtpl_builder(env):
             | if $images[$container.name] != null then (.image |= $images[$container.name]) else . end
           )
         else . end
+      | . * $extra_overrides
     '''
 
     rendered = local(
-      ['yq', '-y', '--argjson', 'images', images, program],
+      ['yq', '-y', '--argjson', 'images', images, '--argjson', 'extra_overrides', extra_overrides, program],
       quiet=True,
       echo_off=True,
       stdin=read_file(filepath),
