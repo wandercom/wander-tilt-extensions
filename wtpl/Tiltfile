@@ -12,7 +12,8 @@ def wtpl_builder(env):
     watch_file(filepath)
 
     # { "v4-bar": "docker.io/foo/bar:1.2.3", ... }
-    # Broad restriction is that it must not contain ', since we're using that to enclose the json object arg.
+    # Keep this program in parity with ../bin/wtpl. Extensions do not expose
+    # a stable path to their checkout, so this wrapper cannot safely invoke it.
     images = encode_json(kwargs.get('images', {}))
     # Optional runtime overrides deep-merged into the root after the standard
     # env merge. Use this for values that aren't known until Tiltfile-eval time
