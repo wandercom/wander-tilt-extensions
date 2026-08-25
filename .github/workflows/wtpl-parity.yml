@@ -1,0 +1,16 @@
+name: wtpl parity
+
+on:
+  pull_request:
+    paths:
+      - bin/wtpl
+      - wtpl/Tiltfile
+      - tests/assert-renderer-parity.sh
+      - .github/workflows/wtpl-parity.yml
+
+jobs:
+  renderer-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tests/assert-renderer-parity.sh

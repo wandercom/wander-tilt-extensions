@@ -16,9 +16,11 @@ bin/wtpl \
 ```
 
 `--env` and `--file` are required. `--images`, `--extra-overrides`, and `--out`
-are optional. JSON inputs must be objects. When `--out` is provided, the CLI
-writes the rendered YAML atomically.
+are optional. Options accept either `--option value` or `--option=value`. JSON
+inputs must be exactly one object. When `--out` is provided, the CLI writes the
+rendered YAML atomically with permissions derived from the caller's `umask`.
 
 The Tilt extension has no stable checkout-path variable analogous to Python's
 `__file__`, so the extension retains the same renderer instead of invoking this
-script by an unsafe relative path. Keep the two render programs in parity.
+script by an unsafe relative path. `tests/assert-renderer-parity.sh` enforces
+renderer parity in pull requests.

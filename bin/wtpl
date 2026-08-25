@@ -4,8 +4,7 @@
 set -euo pipefail
 
 # shellcheck disable=SC2016 # jq variables must remain literal for yq/jq to evaluate.
-readonly PROGRAM='.
-  as $manifest
+readonly PROGRAM='. as $manifest
   | (($manifest["wander-deployment-env"] // {})[$ENV["TILTENV"] // empty] // {}) as $fallback_overrides
   | ((.["wander-env"] // {})[$ENV["TILTENV"] // empty] // {}) as $spec
   | $manifest
@@ -38,6 +37,8 @@ Optional arguments:
                            Defaults to {}.
   --out FILE               Write atomically to FILE instead of standard output.
   --help                   Show this help text.
+
+Options accept either --option value or --option=value.
 EOF
 }
 
@@ -50,7 +51,14 @@ require_json_object() {
   local value=$1
   local option=$2
 
-  jq --exit-status 'type == "object"' >/dev/null <<<"$value" || die "$option must be a JSON object"
+  jq --exit-status --slurp 'length == 1 and (.[0] | type == "object")' >/dev/null <<<"$value" || die "$option must be one JSON object"
+}
+
+require_yq_wrapper() {
+  local version
+
+  version=$(yq --version 2>&1 || true)
+  [[ $version =~ ^yq[[:space:]][0-9]+ ]] || die 'yq must be the kislyuk jq-wrapper (https://github.com/kislyuk/yq)'
 }
 
 env_name=''
@@ -66,25 +74,45 @@ while (($# > 0)); do
       env_name=$2
       shift 2
       ;;
+    --env=*)
+      env_name=${1#*=}
+      shift
+      ;;
     --file)
       (($# >= 2)) || die '--file requires a value'
       manifest=$2
       shift 2
+      ;;
+    --file=*)
+      manifest=${1#*=}
+      shift
       ;;
     --images)
       (($# >= 2)) || die '--images requires a value'
       images=$2
       shift 2
       ;;
+    --images=*)
+      images=${1#*=}
+      shift
+      ;;
     --extra-overrides)
       (($# >= 2)) || die '--extra-overrides requires a value'
       extra_overrides=$2
       shift 2
       ;;
+    --extra-overrides=*)
+      extra_overrides=${1#*=}
+      shift
+      ;;
     --out)
       (($# >= 2)) || die '--out requires a value'
       out=$2
       shift 2
+      ;;
+    --out=*)
+      out=${1#*=}
+      shift
       ;;
     --help)
       usage
@@ -101,6 +129,7 @@ done
 [[ -r $manifest ]] || die "cannot read manifest: $manifest"
 command -v yq >/dev/null || die 'yq is required'
 command -v jq >/dev/null || die 'jq is required'
+require_yq_wrapper
 require_json_object "$images" '--images'
 require_json_object "$extra_overrides" '--extra-overrides'
 
@@ -117,6 +146,8 @@ out_dir=$(dirname -- "$out")
 [[ -d $out_dir ]] || die "output directory does not exist: $out_dir"
 tmp=$(mktemp "$out_dir/.wtpl.XXXXXX")
 trap 'rm -f -- "$tmp"' EXIT
+umask_value=$(umask)
+chmod "$(printf '%03o' "$((0666 & ~0$umask_value))")" "$tmp"
 render >"$tmp"
 mv -- "$tmp" "$out"
 trap - EXIT
